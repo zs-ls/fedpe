@@ -1,0 +1,11 @@
+train_args:
+  gpu: 0
+  client_num: 10
+  client_sample_rate: 0.2
+  train_samples_per_client: 200
+  test_samples_per_client: 50
+  model_type: "LeNet"
+  aggregated_method: "FedAvg"
+  client_sample_method: "random"
+  local_epoch: 10
+  object_acc: 80
