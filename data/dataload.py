@@ -61,7 +61,7 @@ if __name__ == "__main__":
         print(f"Test set size: {len(test_set)}")
 
         # 获取一个样本图像和标签
-        image, label = train_set[0]  # 获取第一个样本（图像，标签）
+        image, label = test_set[0]  # 获取第一个样本（图像，标签）
         print(image)
 
         # 打印图像形状
@@ -71,3 +71,4 @@ if __name__ == "__main__":
         plt.imshow(image[0], cmap='gray')  # 显示图像 (MNIST 是灰度图，image[0] 选择第一个通道)
         plt.title(f"Label: {label}")
         plt.show()
+        exit()

@@ -20,3 +20,13 @@ class LeNet(nn.Module):
         x = torch.tanh(self.fc2(x))
         x = self.fc3(x)
         return x
+
+if __name__ == "__main__":
+    model = LeNet(10)
+    model_dict = model.state_dict()
+    for name, param in model.named_parameters():
+        if "weight" in name:
+            print(name)
+    for name, param in model_dict.items():
+        if "weight" in name:
+            print(name)

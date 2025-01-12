@@ -65,7 +65,7 @@ if __name__ == "__main__":
 
     logging.info("初始化客户端")
     clients = {i: Client(i, all_clients_train_set[i], all_client_test_set[i],
-               copy.deepcopy(server.net), device, args.train_samples_per_client) for i in range(args.client_num)}
+               copy.deepcopy(server.clients_net[i]), device, args.train_samples_per_client) for i in range(args.client_num)}
 
     logging.info("开始训练")
     round_cnt = 0
@@ -76,7 +76,7 @@ if __name__ == "__main__":
         logging.info("将模型下发给选中的客户端，并开始本地训练")
         clients_param_list = []
         for i in server.clients_index_list:
-            clients_param_list.append(clients[i].train(copy.deepcopy(server.net)))
+            clients_param_list.append(clients[i].train(copy.deepcopy(server.clients_net[i])))
 
         logging.info("接收本地客户端发送的模型，并进行全局聚合")
         server.aggregation(clients_param_list)
