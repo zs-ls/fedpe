@@ -45,7 +45,8 @@ class Client:
             "id": self.client_id,
             "net": {},
             "mask": {},
-            "delta_accuracy": 0.0
+            "delta_accuracy": 0.0,
+            "mAP": 0.0
         }
 
         self.net.to(self.device)
@@ -53,31 +54,39 @@ class Client:
         net_accuracy = self.test_net_as_map()
         # 计算模型准确率变化
         delta_accuracy = net_accuracy - self.net_accuracy
-        logging.info("上轮准确率为：{}，当前准确率为：{}%， 准确率变化值为：{}%".format(self.net_accuracy, net_accuracy * 100, delta_accuracy * 100))
+        logging.info("上轮准确率为：{:.2f}%，当前准确率为：{:.2f}%， 准确率变化值为：{:.2f}%，当前剪枝率为：{:.2f}%".format(
+            self.net_accuracy * 100, net_accuracy * 100, delta_accuracy * 100, self.accumulate_prune_rate * 100))
         self.net_accuracy = net_accuracy
         client_param_dict["delta_accuracy"] = delta_accuracy
-        # 自适应剪枝-扩展模型
-        if net_accuracy >= self.accuracy_threshold and delta_accuracy > 0 and self.accumulate_prune_rate <= self.max_prune_rate:
-            net = copy.deepcopy(self.net)
+        accumulate_prune_rate = self.accumulate_prune_rate
+        if delta_accuracy > 0:
             prune_rate = torch.sigmoid(torch.tensor(self.pruning_param * delta_accuracy)).item()
+            accumulate_prune_rate += prune_rate
+        elif delta_accuracy < 0:
+            expand_rate = torch.sigmoid(torch.tensor(self.expanding_param * delta_accuracy)).item()
+            accumulate_prune_rate -= expand_rate
+        # 自适应剪枝-扩展模型
+        if net_accuracy >= self.accuracy_threshold and delta_accuracy > 0 and accumulate_prune_rate <= self.max_prune_rate:
+            net = copy.deepcopy(self.net)
             for name, param in self.net.named_parameters():
                 if "weight" in name:
                     param.data.add_(self.residual[name].data)
-            self.accumulate_prune_rate += prune_rate
-            logging.info("对模型进行剪枝，剪枝率为：{}，累计剪枝率为：{}".format(
-                prune_rate, self.accumulate_prune_rate))
-            self.unstructured_pruning(prune_rate)
+            logging.info("对模型进行剪枝，剪枝率为：{:.2f}%，上轮剪枝率为：{:.2f}%，累计剪枝率为：{:.2f}%".format(
+                prune_rate * 100, self.accumulate_prune_rate * 100, accumulate_prune_rate * 100))
+            self.accumulate_prune_rate = accumulate_prune_rate
+            self.unstructured_pruning(self.accumulate_prune_rate)
             for name, param in self.residual.items():
-                param.data.add_(net.state_dict()[name].data - self.net.state_dict()[name].data)
-        elif delta_accuracy < 0:
-            expand_rate = torch.sigmoid(torch.tensor(self.expanding_param * delta_accuracy)).item()
+                if "weight" in name:
+                    param.data.add_(net.state_dict()[name].data - self.net.state_dict()[name].data)
+        elif delta_accuracy < 0 and accumulate_prune_rate > 0 and net_accuracy >= self.accuracy_threshold:
             net = copy.deepcopy(self.net)
-            self.accumulate_prune_rate -= expand_rate
-            logging.info("对模型进行扩展，扩展率为：{}，累计剪枝率为：{}".format(
-                expand_rate, self.accumulate_prune_rate))
+            logging.info("对模型进行扩展，扩展率为：{:.2f}%，上轮剪枝率为：{:.2f}%，累计剪枝率为：{:.2f}%".format(
+                expand_rate * 100, self.accumulate_prune_rate * 100, accumulate_prune_rate * 100))
+            self.accumulate_prune_rate = accumulate_prune_rate
             self.expand(expand_rate)
             for name, param in self.residual.items():
-                param.data.add_(net.state_dict()[name].data - self.net.state_dict()[name].data)
+                if "weight" in name:
+                    param.data.add_(net.state_dict()[name].data - self.net.state_dict()[name].data)
 
         client_param_dict["mask"] = self.mask_dict
 
@@ -100,12 +109,17 @@ class Client:
                 ce_loss = self.loss_func(y, labels)
                 losses.append(ce_loss.item())
                 ce_loss.backward()
+                for name, param in self.net.named_parameters():
+                    if "weight" in name:
+                        param.grad *= self.mask_dict[name].to(self.device).float()
                 optimizer.step()
             loss_history.append(np.mean(losses))
         loss = np.mean(loss_history)
         self.net.to("cpu")
         client_param_dict["net"] = self.net.state_dict()
-        log_info = '\t Cli-{:>2d} \t | \t ceLoss:{:.6f}'.format(self.client_id, loss)
+        net_accuracy = self.test_net_as_map()
+        client_param_dict["mAP"] = net_accuracy
+        log_info = '\t Cli-{:>2d} \t | \t ceLoss:{:.6f} | \t acc:{:.2f}%'.format(self.client_id, loss, net_accuracy * 100)
         logging.info(log_info)
 
         return client_param_dict
@@ -155,17 +169,18 @@ class Client:
             if "weight" in name:
                 abs_param_data = torch.abs(param.data)
                 threshold = torch.quantile(abs_param_data, prune_rate)
-                mask = (abs_param_data >= threshold).float()
+                mask = abs_param_data >= threshold
                 self.mask_dict[name] = mask.to('cpu')
-                param.data.mul_(mask)
+                param.data.mul_(mask.float())
 
     def expand(self, expand_rate):
         for name, param in self.net.named_parameters():
             if "weight" in name:
                 abs_param_data = torch.abs(self.residual[name].data)
-                threshold = torch.quantile(abs_param_data, 1 - expand_rate)
-                mask = (abs_param_data >= threshold).long()
-                self.mask_dict[name] = mask.to('cpu')
+                threshold = torch.quantile(abs_param_data, 1.0 - expand_rate)
+                mask = abs_param_data >= threshold
+                self.mask_dict[name] |= mask.to('cpu')
+                mask = mask.long()
                 param.data[mask == 1] = self.residual[name].data[mask == 1]
 
     def test_net(self):
@@ -207,5 +222,5 @@ class Client:
 
 
 if __name__ == "__main__":
-    torch.sigmoid(torch.tensor)
+    print(torch.sigmoid(torch.tensor(18 * 0.025)))
 

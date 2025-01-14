@@ -1,16 +1,27 @@
 import copy
-
+import time
 import torch
 import random
 import numpy as np
 import yaml
 import logging
+import matplotlib.pyplot as plt
 
 from data.dataload import DataSet
 from algorithms.FedPE.server import Server
 from algorithms.FedPE.client import Client
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    filename="./log/train.log",
+    filemode="w",
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logging.getLogger().addHandler(console_handler)
 
 
 def setup_seed(seed):
@@ -41,6 +52,7 @@ class Config:
 
 
 if __name__ == "__main__":
+    start_time = time.time()
     logging.info("设置随机种子")
     setup_seed(0)
 
@@ -69,6 +81,8 @@ if __name__ == "__main__":
 
     logging.info("开始训练")
     round_cnt = 0
+    all_mAP = []
+    max_mAP = 0.0
     while True:
         logging.info("客户端采样")
         server.clients_sample()
@@ -82,16 +96,41 @@ if __name__ == "__main__":
         server.aggregation(clients_param_list)
 
         logging.info("评估本轮聚合后的模型")
-        test_auc, test_loss = server.test_net(dataset.test_set)
+        mAP = 0.0
+        for i in range(len(clients_param_list)):
+            mAP += clients_param_list[i]["mAP"]
+            # print(clients_param_list[i]["mAP"])
+        mAP /= len(clients_param_list)
 
-        log_info = '    Round-{:>2d} | Loss: ce:{} | Acc: test:{}%'.format(
-            round_cnt + 1, test_loss, test_auc
+        log_info = '    Round-{:>2d} | mAP:{:.2f}%'.format(
+            round_cnt + 1, mAP * 100
         )
         logging.info(log_info)
 
-        if (float(test_auc) - args.object_acc) > 0:
-            exit()
-
+        # if (float(test_auc) - args.object_acc) > 0:
+        #     exit()
+        all_mAP.append(mAP)
+        max_mAP = max(max_mAP, mAP)
         round_cnt += 1
+        if round_cnt >= 200:
+            end_time = time.time()
+            training_time = end_time - start_time
+            # 将训练时间转换为小时、分钟、秒
+            hours, remainder = divmod(training_time, 3600)
+            minutes, seconds = divmod(remainder, 60)
+
+            # 使用logging输出训练时间
+            logging.info(f"Training Time: {int(hours)} hours {int(minutes)} minutes {int(seconds)} seconds")
+
+            info = 'The best mAP is: {:.2f}%'.format(max_mAP * 100)
+            logging.info(info)
+            plt.plot(range(1, round_cnt + 1), all_mAP, label='FedPE', color='red')
+            plt.xlabel('Communication Rounds')
+            plt.ylabel('Test mAP')
+            # plt.title('Test Accuracy vs Round')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+            exit()
 
 

@@ -1,6 +1,6 @@
 train_args:
   gpu: 0
-  client_num: 10
+  client_num: 50
   client_sample_rate: 1
   train_samples_per_client: 200
   test_samples_per_client: 50
