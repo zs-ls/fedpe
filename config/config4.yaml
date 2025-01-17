@@ -10,6 +10,7 @@ data_distribution: "iid"
 
 gpu: 0
 train_samples_per_client: 200
+train_data_rate: 0.8
 test_samples_per_client: 50
 classes_per_client: 2
 local_epoch: 10

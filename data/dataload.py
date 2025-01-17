@@ -29,7 +29,7 @@ class DataSet:
         self.classes_per_client = args.classes_per_client
         self.class_num = 0
         self.random_sample_writer = []
-        self.train_data_rate = args.trian_data_rate
+        self.train_data_rate = args.train_data_rate
 
     def load(self):
         if self.dataset == "MNIST":
