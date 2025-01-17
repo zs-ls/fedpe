@@ -1,16 +1,15 @@
-seed: 2
-client_num: 5
+seed: 3
+client_num: 50
 client_sample_rate: 1
-total_round: 30
+total_round: 200
 algorithm: "FedAvg"
 client_sample_method: "random"
-model_type: "LeNet"
-dataset: "MNIST"
+model_type: "CNN"
+dataset: "FEMNIST"
 data_distribution: "iid"
 
 gpu: 0
 train_samples_per_client: 200
-trian_data_rate: 0.8
 test_samples_per_client: 50
 classes_per_client: 2
 local_epoch: 10

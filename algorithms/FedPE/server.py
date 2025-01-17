@@ -8,6 +8,7 @@ import torch.nn as nn
 
 sys.path.append("../../")
 from models.lenet import LeNet
+from models.cnn import CNN
 from torch.utils.data import DataLoader
 
 
@@ -39,20 +40,33 @@ class Server:
         self.clients_index_list = None
         self.model_type = args.model_type
         self.net = None
-        self.aggregated_method = args.aggregated_method
+        self.algorithm = args.algorithm
         self.clients_delta_accuracy = []
         self.client_sample_method = args.client_sample_method
         self.clients_net = []
         self.clients_mask = []
-        self.batch_size = 5
+        self.batch_size = args.batch_size
+        self.class_num = 0
+        self.model_parameters_num = 0
 
-    def model_init(self):
+    def model_init(self, class_num):
+        print(class_num)
+        self.class_num = class_num
         if self.model_type == "LeNet":
-            self.net = LeNet(10)
-            for i in range(self.client_num):
-                self.clients_mask.append({name: torch.ones_like(param, dtype=bool) for name, param in self.net.named_parameters() if "weight" in name})
-                self.clients_net.append(copy.deepcopy(self.net))
-                self.clients_delta_accuracy.append(0.0)
+            self.net = LeNet(self.class_num)
+        elif self.model_type == "CNN":
+            self.net = CNN(self.class_num)
+        for name, param in self.net.named_parameters():
+            if "weight" in name:
+                self.model_parameters_num += param.numel()
+        for i in range(self.client_num):
+            self.clients_mask.append({
+                name: torch.ones_like(param, dtype=bool)
+                for name, param in self.net.named_parameters()
+                if "weight" in name
+            })
+            self.clients_net.append(copy.deepcopy(self.net))
+            self.clients_delta_accuracy.append(0.0)
                 # for name, param in self.clients_net[i].named_parameters():
                 #     if "weight" in name:
                 #         param.data.mul_(self.clients_mask[i][name].float())
@@ -63,9 +77,9 @@ class Server:
             self.random_client_sample()
 
     def aggregation(self, clients_param_list):
-        if self.aggregated_method == "FedAvg":
+        if self.algorithm == "FedAvg":
             self.avg(clients_param_list)
-        elif self.aggregated_method == "FedPE":
+        elif self.algorithm == "FedPE":
             self.fair(clients_param_list)
 
     def fair(self, clients_param_list):
@@ -128,7 +142,36 @@ class Server:
                     #     flag = 1
             self.clients_net[i] = client_net
 
+    def avg(self, clients_param_list):
+        clients_net = []
+        clients_train_data_num = []
+        for client_param in clients_param_list:
+            clients_net.append(client_param["net"])
+            clients_train_data_num.append(client_param["samples"])
 
+        clients_train_data_sum = sum(clients_train_data_num)
+        aggregated_weight = [1.0 * client_data_num / clients_train_data_sum
+                             for client_data_num in clients_train_data_num]
+        print(aggregated_weight)
+        aggregated_net = self.net.state_dict()
+        for key in aggregated_net.keys():
+            aggregated_net[key] = torch.zeros_like(aggregated_net[key])
+            for i in range(len(clients_net)):
+                aggregated_net[key] += aggregated_weight[i] * clients_net[i][key]
+
+        self.net.load_state_dict(aggregated_net)
+        for i in range(self.client_num):
+            client_net = copy.deepcopy(self.net)
+            for name, param in client_net.named_parameters():
+                if "weight" in name:
+                    # print(self.clients_mask[i][name])
+                    param.data.mul_(self.clients_mask[i][name].float())
+            self.clients_net[i] = client_net
+
+    def random_client_sample(self):
+        sample_nums = max(int(self.client_sample_rate * self.client_num), 1)
+        all_client_idx = [i for i in range(self.client_num)]
+        self.clients_index_list = list(np.random.choice(all_client_idx, sample_nums, replace=False))
 
     def test_net(self, test_set):
         self.net.to(self.device)
@@ -192,38 +235,25 @@ class Server:
 
         return mean_average_precision
 
-    def avg(self, clients_param_list):
-        clients_net = []
-        clients_train_data_num = []
-        for client_param in clients_param_list:
-            clients_net.append(client_param["net"])
-            clients_train_data_num.append(client_param["sample_num"])
 
-        clients_train_data_sum = sum(clients_train_data_num)
-        aggregated_weight = [1.0 * client_data_num / clients_train_data_sum
-                             for client_data_num in clients_train_data_num]
-        aggregated_net = self.net.state_dict()
-        for key in aggregated_net.keys():
-            aggregated_net[key] = torch.zeros_like(aggregated_net[key])
-            for i in range(len(clients_net)):
-                aggregated_net[key] += aggregated_weight[i] * clients_net[i][key]
-
-        self.net.load_state_dict(aggregated_net)
-
-    def random_client_sample(self):
-        sample_nums = max(int(self.client_sample_rate * self.client_num), 1)
-        all_client_idx = [i for i in range(self.client_num)]
-        self.clients_index_list = list(np.random.choice(all_client_idx, sample_nums, replace=False))
-
-
+import os
 if __name__ == "__main__":
-    all_args = get_config("../../config/config.yaml")
-    args = all_args.train_args
-    device = torch.device('cuda:{}'.format(
-        args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
-    server = Server(args, device)
-    server.model_init()
-    server.unstructured_pruning(0.2)
+    print(torch.sigmoid(torch.tensor(18*0.1)))
+    print(", ".join(["1.1", "2.1"]))
+    # pro_name = "test"
+    # result_file = f"./result/{pro_name}.xlsx"
+    # directory = os.path.dirname(result_file)
+    # if not os.path.exists(directory):
+    #     os.makedirs(directory)  # 创建父目录
+    #     print(f"目录不存在，已创建: {directory}")
+    #     open(result_file, 'w').close()
+    # all_args = get_config("../../config/config.yaml")
+    # args = all_args.train_args
+    # device = torch.device('cuda:{}'.format(
+    #     args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
+    # server = Server(args, device)
+    # server.model_init()
+    # server.unstructured_pruning(0.2)
     # x = torch.randn(3, 4)
     # print(x)
     # abs_x = torch.abs(x)
@@ -234,5 +264,8 @@ if __name__ == "__main__":
     # print(mask)
     # x = x * mask.float()
     # print(x)
+    # list = [1, 3, 3, 2, 1, 5, 6, 7, 8, 9]
+    # ind_list = np.random.choice(list, 5, replace=True)
+    # print(ind_list)
 
 
